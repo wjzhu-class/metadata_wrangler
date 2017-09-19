@@ -278,6 +278,9 @@ class TestCatalogController(ControllerTest):
         path = os.path.join(resource_path, "content_server_lookup.opds")
         opds = open(path).read()
 
+        # Here's a single OPDS entry.
+        opds_entry = "<entry><id>urn:isbn:9781449358068</id><title>A Title</title></entry>"
+
         # And here's some OPDS with an invalid identifier.
         invalid_opds = "<feed><entry><id>invalid</id></entry></feed>"
 
@@ -353,7 +356,32 @@ class TestCatalogController(ControllerTest):
         # there's new information to process.
         eq_(CoverageRecord.TRANSIENT_FAILURE, record.status)
 
-        # The invalid identifier returns a 400 error message.
+        # The story with the single OPDS entry is similar.
+        #
+        with self.app.test_request_context(
+                headers=self.valid_auth, data=opds_entry
+        ):
+            response = self.controller.add_with_metadata(self.collection.name)
+
+        # add_with_metadata sends one message.
+        root = etree.parse(StringIO(response.data))
+        [catalogued] = self.XML_PARSE(root, message_path)
+        identifier = self._identifier(identifier_type="ISBN",
+                                      foreign_id='9781449358068')
+        eq_(identifier.urn, self.xml_value(catalogued, 'atom:id'))
+        eq_('201', self.xml_value(catalogued, 'simplified:status_code'))
+        eq_('Successfully added', 
+            self.xml_value(catalogued, 'schema:description'))
+
+        # The identifier from the OPDS entry is now in the catalog.
+        assert identifier in self.collection.catalog
+
+        # There's a LicensePool and an Identifier for the identifier.
+        [pool] = identifier.licensed_through
+        [edition] = identifier.primarily_identifies
+        eq_("A Title", edition.title)
+
+        # But the invalid identifier returns a 400 error message.
         with self.app.test_request_context(headers=self.valid_auth, data=invalid_opds):
             response = self.controller.add_with_metadata(self.collection.name)
         eq_(HTTP_OK, response.status_code)
