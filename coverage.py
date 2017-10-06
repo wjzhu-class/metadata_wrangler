@@ -90,6 +90,8 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
 
     DEFAULT_OVERDRIVE_COLLECTION_NAME = u'Default Overdrive'
 
+    DEFAULT_WORKER_SIZE = 10
+
     # We cover all Collections, regardless of their protocol.
     PROTOCOL = None
 
@@ -98,6 +100,9 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
         content_cafe_api=None, overdrive_api_class=OverdriveAPI, **kwargs
     ):
 
+        # We'll run the IdentifierResoultionCoverageProvider with
+        # multithreaded processing by default.
+        kwargs['multithreaded'] = kwargs.get('multithreaded', True)
         super(IdentifierResolutionCoverageProvider, self).__init__(
             collection, preregistered_only=True, **kwargs
         )
