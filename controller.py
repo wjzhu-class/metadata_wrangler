@@ -122,13 +122,6 @@ class IndexController(object):
                 "title": "Register your OPDS server with this metadata service"
             },
             {
-                "rel": "http://librarysimplified.org/rel/metadata/lookup",
-                "href": "/lookup{?data_source,urn*}",
-                "type": "application/atom+xml;profile=opds-catalog",
-                "title": "Look up metadata about one or more specific items",
-                "templated": "true"
-            },
-            {
                 "rel": "http://opds-spec.org/sort/new",
                 "href": "/{collection_metadata_identifier}/updates{?data_source}",
                 "type": "application/atom+xml;profile=opds-catalog",

@@ -106,16 +106,6 @@ def heartbeat():
 def canonical_author_name():
     return CanonicalizationController(app._db).canonicalize_author_name()
 
-@app.route('/lookup')
-@app.route('/<collection_metadata_identifier>/lookup')
-@accepts_auth
-@returns_problem_detail
-def lookup(collection_metadata_identifier=None):
-    return URNLookupController(app._db).work_lookup(
-        VerboseAnnotator, require_active_licensepool=False,
-        collection_details=collection_metadata_identifier
-    )
-
 @app.route('/<collection_metadata_identifier>/add', methods=['POST'])
 @requires_auth
 @returns_problem_detail
