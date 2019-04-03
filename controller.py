@@ -183,20 +183,15 @@ class CanonicalizationController(object):
 
     log = logging.getLogger("Canonicalization Controller")
 
-    def __init__(self, _db):
+    def __init__(self, _db, canonicalizer=None):
         self._db = _db
-        self.canonicalizer = AuthorNameCanonicalizer(self._db)
+        self.canonicalizer = canonicalizer or AuthorNameCanonicalizer(self._db)
 
     def canonicalize_author_name(self):
         urn = request.args.get('urn')
-        display_name = request.args.get('display_name')
-        if urn:
-            identifier, is_new = Identifier.parse_urn(self._db, urn, False)
-            if not isinstance(identifier, Identifier):
-                return INVALID_URN
-        else:
-            identifier = None
+        identifier = self.parse_identifier(urn)
 
+        display_name = request.args.get('display_name')
         author_name = self.canonicalizer.canonicalize_author_name(
             identifier, display_name
         )
@@ -207,7 +202,32 @@ class CanonicalizationController(object):
 
         if not author_name:
             return make_response("", HTTP_NOT_FOUND)
-        return make_response(author_name, HTTP_OK, {"Content-Type": "text/plain"})
+        return make_response(
+            author_name, HTTP_OK, {"Content-Type": "text/plain"}
+        )
+
+    def parse_identifier(self, urn):
+        """Try to parse a URN into an identifier.
+
+        :return: An Identifier if possible; otherwise None.
+        """
+        if not urn:
+            return None
+        try:
+            result = Identifier.parse_urn(self._db, urn, False)
+        except ValueError, e:
+            # The identifier is parseable but invalid, e.g. an
+            # ASIN used as an ISBN. Ignore it.
+            return None
+
+        if not result:
+            # Identifier.for_foreign_id can return None, but I don't
+            # think that can happen through parse_urn. This is just to
+            # be safe.
+            return None
+
+        identifier, is_new = result
+        return identifier
 
 
 class CatalogController(object):
@@ -652,7 +672,10 @@ class CatalogController(object):
             )
         except Exception as e:
             log.error("Error retrieving URL", exc_info=e)
-            return REMOTE_INTEGRATION_ERROR
+            return REMOTE_INTEGRATION_ERROR.detailed(
+                _("Could not retrieve public key URL %(url)s",
+                  url=public_key_url)
+            )
 
         content_type = None
         if response.headers:
@@ -662,7 +685,9 @@ class CatalogController(object):
             # There's no JSON to speak of.
             log.error("Could not find OPDS 2 document: %s/%s",
                       response.content, content_type)
-            return INVALID_INTEGRATION_DOCUMENT
+            return INVALID_INTEGRATION_DOCUMENT.detailed(
+                _("Not an integration document: %(doc)s", doc=response.content)
+            )
 
         public_key_response = response.json()
 
@@ -685,7 +710,7 @@ class CatalogController(object):
                 client_url, base_public_key_url
             )
             return INVALID_INTEGRATION_DOCUMENT.detailed(
-                _("The public key integration document id doesn't match submitted url")
+                _("The public key integration document id (%(id)s) doesn't match submitted url %(url)s", id=client_url, url=base_public_key_url)
             )
 
         public_key = public_key_response.get('public_key')
@@ -712,7 +737,7 @@ class CatalogController(object):
                 )
             except Exception, e:
                 return INVALID_CREDENTIALS.detailed(
-                    _("Error decoding JWT: %s") % e.message
+                    _("Error decoding JWT: %(message)s", message=e.message)
                 )
 
             # The ability to create a valid JWT indicates control over
@@ -762,7 +787,14 @@ class URNLookupController(CoreURNLookupController):
     # IdentifierResolutionCoverageProvider. The Identifier types
     # supported by that coverage provider are the only ones for which
     # we can credibly provide a lookup service.
-    VALID_TYPES = IdentifierResolutionCoverageProvider.INPUT_IDENTIFIER_TYPES
+    #
+    # However, we also offer a lookup service by Gutenberg ID, since
+    # we have that information from a while back and it's useful to
+    # some clients.
+    VALID_TYPES = (
+        IdentifierResolutionCoverageProvider.INPUT_IDENTIFIER_TYPES
+        + [Identifier.GUTENBERG_ID]
+    )
 
     log = logging.getLogger("URN lookup controller")
 

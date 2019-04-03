@@ -1,3 +1,5 @@
+from bs4 import BeautifulSoup
+
 from nose.tools import (
     set_trace,
     eq_,
@@ -128,6 +130,10 @@ class TestContentCafeAPI(DatabaseTest):
                 self.measure_popularity_called_with = args
                 return self.popularity_measurement
 
+            def is_suitable_image(self, image):
+                self.is_suitable_image_called_with = image
+                return True
+
         api = Mock(self._db, 'uid', 'pw', self.soap, self.http.do_get)
         m = api.create_metadata
 
@@ -159,6 +165,10 @@ class TestContentCafeAPI(DatabaseTest):
         eq_(image_url, image.href)
         eq_('image/png', image.media_type)
         eq_('an image!', image.content)
+
+        # We ran the image through our mocked version of is_suitable_image,
+        # and it said it was fine.
+        eq_(image.content, api.is_suitable_image_called_with)
 
         # Here's the popularity measurement.
         eq_([api.popularity_measurement], metadata.measurements)
@@ -239,6 +249,21 @@ class TestContentCafeAPI(DatabaseTest):
         eq_("text/html", link.media_type)
         eq_("Here you go", link.content)
 
+    def test__extract_title(self):
+        # Standalone test of the _extract_title helper method.
+
+        def assert_title(title, expect):
+            markup = '<html><span class="PageHeader2">%s</span><content>Description</content>' % title
+            soup = BeautifulSoup(markup, 'lxml')
+            eq_(expect, ContentCafeAPI._extract_title(soup))
+
+
+        # A normal book title is successfully extracted.
+        assert_title("A great book", "A great book")
+
+        # A supposed title that's in KNOWN_BAD_TITLES is ignored.
+        assert_title("No content currently exists for this item", None)
+
     def test_add_reviews(self):
         """Verify that add_reviews works in a real case."""
         metadata = Metadata(DataSource.CONTENT_CAFE)
@@ -308,6 +333,18 @@ class TestContentCafeAPI(DatabaseTest):
         eq_(expect, self.soap.estimated_popularity_calls.pop())
         eq_(None, result)
 
+    def test_is_suitable_image(self):
+        # Images are rejected if we can tell they are Content Cafe's
+        # stand-in images.
+        m = ContentCafeAPI.is_suitable_image
+
+        content = self.data_file("stand-in-image.png")
+        eq_(False, m(content))
+
+        # Otherwise, it's fine. We don't check that the image is
+        # valid, only that it's not a stand-in image.
+        eq_(True, m("I'm not a stand-in image."))
+
 
 class TestContentCafeCoverageProvider(DatabaseTest):
 
@@ -325,33 +362,19 @@ class TestContentCafeCoverageProvider(DatabaseTest):
 
         # If no ContentCafeAPI is provided, the output of
         # ContentCafeAPI.from_config is used.
-        #
-        # If no MirrorUploader is provided, the output of
-        # S3Uploader.sitewide is used.
         class MockContentCafeAPI(ContentCafeAPI):
             @classmethod
             def from_config(cls, *args, **kwargs):
                 return mock_api
         content_cafe.ContentCafeAPI = MockContentCafeAPI
 
-        class MockUploader(MirrorUploader):
-            @classmethod
-            def sitewide(cls, *args, **kwargs):
-                return mock_mirror
-        # The content_cafe module has already imported MirrorUploader
-        # from core/mirror, so we need to mock it there rather than
-        # mocking mirror.
-        content_cafe.MirrorUploader = MockUploader
-
         # Now we can invoke the constructor with no special arguments
-        # and our mocked defaults will be used.
+        # and our mocked default will be used.
         provider = ContentCafeCoverageProvider(self._default_collection)
-        eq_(mock_mirror, provider.replacement_policy.mirror)
         eq_(mock_api, provider.content_cafe)
 
         # Restore mocked classes
         content_cafe.ContentCafeAPI = ContentCafeAPI
-        content_cafe.MirroUploader = MirrorUploader
 
     def test_process_item_success(self):
         class MockMetadata(object):
@@ -369,7 +392,7 @@ class TestContentCafeCoverageProvider(DatabaseTest):
         api = MockContentCafeAPI()
 
         provider = ContentCafeCoverageProvider(
-            self._default_collection, api, object()
+            self._default_collection, api
         )
         identifier = self._identifier()
 

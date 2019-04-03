@@ -4,7 +4,7 @@ import os
 import re
 
 from nose.tools import set_trace
-from oclc import OCLCLinkedData
+from oclc.linked_data import OCLCLinkedData
 from viaf import VIAFClient, MockVIAFClient
 
 from core.model import (
@@ -51,8 +51,10 @@ class AuthorNameCanonicalizer(object):
         This is intended to extract e.g. "Bill O'Reilly" from
         "Bill O'Reilly with Martin Dugard".
 
-        TODO: When the author is "Ryan and Josh Shook" I really have no clue
-        what to do.
+        TODO: Cases we can't handle:
+         van Damme, Jean Claude
+         Madonna, Cher
+         Ryan and Josh Shook
         """
         if not author_name:
             return None
@@ -61,8 +63,27 @@ class AuthorNameCanonicalizer(object):
         for splitter in (' with ', ' and '):
             if splitter in author_name:
                 author_name = author_name.split(splitter)[0]
-        author_name = author_name.split(", ")[0]
 
+        author_names = author_name.split(", ")
+        if len(author_names) == 2 and any(
+            ' ' not in name for name in author_names
+        ):
+            # There are two putative author names, and one of them doesn't
+            # have a space in it. The most likely scenario is that
+            # this is the sort name of a single person
+            # (e.g. "Tolkien, J. R. R."), not two different display names.
+            # In that situation the best we can do is return the
+            # sort name as-is.
+            pass
+        else:
+            # Either there is no comma here, or the comma really does seem to
+            # separate multiple peoples' names. Pick the first one.
+            author_name = author_names[0]
+
+        if author_name.endswith(','):
+            # Sometimes peoples' sort names end with a period, but
+            # commas, not so much.
+            author_name = author_name[:-1]
         return author_name
 
     def canonicalize_author_name(self, identifier, display_name):
@@ -88,7 +109,11 @@ class AuthorNameCanonicalizer(object):
 
         # If we can canonicalize that shortened name, great. If not,
         # try again with the full name.
-        for n in shortened_name, display_name:
+        candidates = [shortened_name]
+        if display_name != shortened_name:
+            candidates.append(display_name)
+
+        for n in candidates:
             v = self._canonicalize(identifier, n)
             if v:
                 return v
@@ -104,6 +129,11 @@ class AuthorNameCanonicalizer(object):
 
 
     def _canonicalize(self, identifier, display_name):
+        if not ' ' in display_name:
+            # This is a one-named entity, like 'Cher' or 'Various'.
+            # The display name and sort name are identical.
+            return display_name
+
         # The best outcome would be that we already have a Contributor
         # with this exact display name and a known sort name.
         self.log.debug("Attempting to canonicalize %s", display_name)
@@ -263,6 +293,10 @@ class AuthorNameCanonicalizer(object):
 
 class MockAuthorNameCanonicalizer(AuthorNameCanonicalizer):
 
+    """Mocks the services used by the author name canonicalizer, but
+    leaves the logic alone.
+    """
+
     def __init__(self, _db, oclcld=None, viaf=None):
         super(MockAuthorNameCanonicalizer, self).__init__(_db)
         self._db = _db
@@ -324,3 +358,25 @@ class MockAuthorNameCanonicalizer(AuthorNameCanonicalizer):
             return self.non_response_results.pop()
         else:
             return None
+
+
+class SimpleMockAuthorNameCanonicalizer(AuthorNameCanonicalizer):
+    """Mocks the entire logic of AuthorNameCanonicalizer, allowing
+    the tester to simply define the 'correct' answers ahead of time.
+    """
+    def __init__(self):
+        self.mapping = {}
+        self.canonicalize_author_name_calls = []
+
+    def register(self, identifier, display_name, value):
+        """Register the canonical author name for an
+        (identifier, display_name) pair.
+        """
+        self.mapping[(identifier, display_name)] = value
+
+    def canonicalize_author_name(self, identifier, display_name):
+        """Record the fact that the method was called, and return
+        the predefined 'correct' answer.
+        """
+        self.canonicalize_author_name_calls.append((identifier, display_name))
+        return self.mapping.get((identifier, display_name), None)

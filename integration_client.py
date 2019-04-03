@@ -21,6 +21,11 @@ class WorkPresentationCoverageProvider(WorkCoverageProvider):
 
     """A CoverageProvider to reset the presentation for a Work as it
     achieves metadata coverage.
+
+    It would be good to have this subclass
+    core.coverage.WorkClassificationCoverageProvider,
+    but it needs to operate on all works, not just works that have
+    been made presentation-ready.
     """
 
     SERVICE_NAME = "Work Presentation Coverage Provider"
@@ -52,6 +57,7 @@ class WorkPresentationCoverageProvider(WorkCoverageProvider):
             default_fiction=None, default_audience=None,
         )
         work.set_presentation_ready(exclude_search=True)
+        return work
 
 
 class CalculatesWorkPresentation(object):
@@ -89,9 +95,7 @@ class CalculatesWorkPresentation(object):
         license_pools = identifier.licensed_through
         if license_pools:
             pool = license_pools[0]
-            work, created = pool.calculate_work(
-                even_if_no_author=True, exclude_search=True,
-            )
+            work, created = pool.calculate_work(exclude_search=True)
             if work:
                 return work
 

@@ -18,7 +18,7 @@ from core.metadata_layer import (
 )
 from core.coverage import CoverageFailure
 
-from oclc import (
+from oclc.linked_data import (
     OCLCLinkedData,
     LinkedDataCoverageProvider,
 )
@@ -28,7 +28,7 @@ from testing import (
     MockVIAFClient,
 )
 
-from . import (
+from .. import (
     DatabaseTest,
     sample_data
 )
@@ -224,7 +224,7 @@ class TestLinkedDataCoverageProvider(DatabaseTest):
         provider = LinkedDataCoverageProvider(
             self._default_collection, api=DoomedOCLCLinkedData(self._db)
         )
-        
+
         edition = self._edition()
         identifier = edition.primary_identifier
 
@@ -240,7 +240,7 @@ class TestLinkedDataCoverageProvider(DatabaseTest):
         provider = LinkedDataCoverageProvider(
             self._default_collection, api=DoomedOCLCLinkedData(self._db)
         )
-        
+
         edition = self._edition()
         identifier = edition.primary_identifier
 
@@ -273,7 +273,7 @@ class TestLinkedDataCoverageProvider(DatabaseTest):
         contributor1 = ContributorData(viaf="1")
         contributor2 = ContributorData(viaf="2", sort_name="Jordan, Robert")
         contributor3 = ContributorData(sort_name="Rice, Anne", display_name="Anne Rice")
-        idata = IdentifierData(type=identifier.type, 
+        idata = IdentifierData(type=identifier.type,
                                identifier=identifier.identifier)
         metadata = Metadata(
             DataSource.OCLC_LINKED_DATA,

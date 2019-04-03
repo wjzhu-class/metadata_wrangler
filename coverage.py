@@ -34,6 +34,8 @@ from core.mirror import MirrorUploader
 
 from core.util import fast_query_count
 
+from oclc.classify import IdentifierLookupCoverageProvider
+
 from overdrive import (
     OverdriveBibliographicCoverageProvider,
 )
@@ -41,14 +43,6 @@ from overdrive import (
 from content_cafe import (
     ContentCafeCoverageProvider,
     ContentCafeAPI,
-)
-
-from oclc_classify import (
-    OCLCClassifyCoverageProvider,
-)
-
-from oclc import (
-    LinkedDataCoverageProvider,
 )
 
 from viaf import (
@@ -134,7 +128,14 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
 
         # Since we are the metadata wrangler, any resources we find,
         # we mirror using the sitewide MirrorUploader.
-        mirror = mirror or MirrorUploader.sitewide(_db)
+        if not mirror:
+            try:
+                mirror = MirrorUploader.sitewide(_db)
+            except CannotLoadConfiguration, e:
+                logging.error(
+                    "No storage integration is configured. Cover images will not be stored anywhere.",
+                    exc_info=e
+                )
         self.mirror = mirror
 
         # We're going to be aggressive about recalculating the presentation
@@ -224,7 +225,14 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
             this_provider_kwargs = provider_kwargs.get(cls, {})
             kwargs.update(this_provider_kwargs)
 
-            add_to.append(cls(**kwargs))
+            try:
+                provider = cls(**kwargs)
+                add_to.append(provider)
+            except CannotLoadConfiguration, e:
+                logging.error(
+                    "Ignoring CoverageProvider which I could not instantiate: %r",
+                    cls, exc_info=e,
+                )
 
         protocol = self.collection.protocol
         providers = []
@@ -232,55 +240,34 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
         # These CoverageProviders can handle items from any kind of
         # collection, so long as the Identifier is of the right type.
 
-        # TODO: This is temporarily disabled -- it needs to become
-        # a CollectionCoverageProvider.
-        #
-        # There's no rush to get this working again because
-        # it was primarily intended for use with Project Gutenberg titles,
-        # which we've downplayed in favor of Feedbooks titles, which
-        # have much better metadata.
-        #
-        #oclc_classify = instantiate(
-        #    OCLCClassifyCoverageProvider, providers, provider_kwargs,
-        #    _db=self._db
-        #)
-
         content_cafe = instantiate(
             ContentCafeCoverageProvider, providers, provider_kwargs,
             collection=self.collection,
             replacement_policy=self.replacement_policy
         )
 
-        # TODO: This is temporarily disabled because its process_item doesn't
-        # work directly on ISBNs -- it assumes the ISBN has already been
-        # associated with OCLC Numbers in some other step. The best
-        # solution is to rearchitect LinkedDataCoverageProvider
-        # to make it assume it's processing ISBNs.
+        # NOTE: The coverage providers for OCLC Linked Data and
+        # the title/author version of OCLC Classify used to be in
+        # here.
         #
-        # This is fine for now because the main things we need out of the
-        # metadata wrangler are cover images and descriptions, which
-        # we can get from ContentCafeCoverageProvider.
-        #
-        #linked_data = instantiate(
-        #    LinkedDataCoverageProvider, providers, provider_kwargs,
-        #    collection=self.collection, replacement_policy=self.policy,
-        #    viaf=self.viaf
-        #)
+        # Those providers need to be rearchitected (and the
+        # title/author lookup one might just need to be removed), so
+        # they're gone for now.
+
+        oclc = instantiate(
+            IdentifierLookupCoverageProvider, providers, provider_kwargs,
+            collection=self.collection, replacement_policy=self.replacement_policy
+        )
 
         # All books identified by Overdrive ID must be looked up via
         # the Overdrive API. We don't enforce that the collection
         # is an Overdrive collection, because we want to allow
         # unauthenticated lookups in the 'unaffiliated' collection.
-        try:
-            overdrive = instantiate(
-                OverdriveBibliographicCoverageProvider, providers,
-                provider_kwargs, collection=self.collection,
-                viaf=self.viaf, replacement_policy=self.replacement_policy
-            )
-        except CannotLoadConfiguration, e:
-            # No Overdrive collection is configured -- we can't
-            # handle Overdrive lookups, as much as we'd like to.
-            pass
+        overdrive = instantiate(
+            OverdriveBibliographicCoverageProvider, providers,
+            provider_kwargs, collection=self.collection,
+            viaf=self.viaf, replacement_policy=self.replacement_policy
+        )
 
         # We already have metadata for books we heard about from an
         # IntegrationClient, but we need to make sure the covers get
@@ -335,9 +322,7 @@ class IdentifierResolutionCoverageProvider(CatalogCoverageProvider):
             # CoverageProvider didn't try to create a Work, or that a
             # preexisting Work has been removed. In the name of
             # resiliency, we might as well try creating a Work.
-            work, is_new = license_pool.calculate_work(
-                even_if_no_author=True, even_if_no_title=True
-            )
+            work, is_new = license_pool.calculate_work(even_if_no_title=True)
             if work:
                 # If we were able to create a Work, it should be made
                 # presentation-ready immediately so people can see the

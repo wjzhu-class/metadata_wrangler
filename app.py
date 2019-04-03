@@ -10,6 +10,7 @@ from flask_babel import Babel
 from flask_sqlalchemy_session import flask_scoped_session
 
 from core.app_server import (
+    ErrorHandler,
     HeartbeatController,
     returns_problem_detail,
 )
@@ -35,17 +36,15 @@ babel = Babel(app)
 
 @app.before_first_request
 def initialize_database(autoinitialize=True):
-    testing = 'TESTING' in os.environ
-    db_url = Configuration.database_url(testing)
+    db_url = Configuration.database_url()
     if autoinitialize:
         SessionManager.initialize(db_url)
     session_factory = SessionManager.sessionmaker(db_url)
     _db = flask_scoped_session(session_factory, app)
     app._db = _db
-    if autoinitialize:
-        SessionManager.initialize_data(_db)
 
     Configuration.load(_db)
+    testing = 'TESTING' in os.environ
     log_level = LogConfiguration.initialize(_db, testing=testing)
     if app.debug is None:
         debug = log_level == 'DEBUG'
@@ -58,6 +57,14 @@ def initialize_database(autoinitialize=True):
     app.log.info("Application debug mode: %r", app.debug)
     for logger in logging.getLogger().handlers:
         app.log.info("Logs are going to %r", logger)
+
+    # Register an error handler that logs exceptions through the
+    # normal logging process and tries to turn them into Problem
+    # Detail Documents.
+    h = ErrorHandler(app, app.config['DEBUG'])
+    @app.errorhandler(Exception)
+    def exception_handler(exception):
+        return h.handle(exception)
 
 def accepts_auth(f):
     @wraps(f)

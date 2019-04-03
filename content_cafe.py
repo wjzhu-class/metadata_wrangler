@@ -1,5 +1,6 @@
 from collections import Counter
 import datetime
+import os
 import requests
 import logging
 from nose.tools import set_trace
@@ -33,9 +34,15 @@ from core.model import (
 from core.util.http import HTTP
 from core.util.summary import SummaryEvaluator
 
-from core.mirror import MirrorUploader
-
 from coverage_utils import MetadataWranglerBibliographicCoverageProvider
+
+def load_file(filename):
+    """Load a file from the Content Cafe subdirectory of files/."""
+    this_dir = os.path.split(__file__)[0]
+    content_dir = os.path.join(this_dir, "files", "content-cafe")
+    path = os.path.join(content_dir, filename)
+    return open(path).read()
+
 
 class ContentCafeCoverageProvider(MetadataWranglerBibliographicCoverageProvider):
     """Create bare-bones Editions for ISBN-type Identifiers.
@@ -48,8 +55,8 @@ class ContentCafeCoverageProvider(MetadataWranglerBibliographicCoverageProvider)
     SERVICE_NAME = "Content Cafe Coverage Provider"
     INPUT_IDENTIFIER_TYPES = [Identifier.ISBN]
     DATA_SOURCE_NAME = DataSource.CONTENT_CAFE
-    
-    def __init__(self, collection, api=None, replacement_policy=None, **kwargs):
+
+    def __init__(self, collection, api=None, **kwargs):
         """Constructor.
 
         :param collection: A Collection.
@@ -58,19 +65,12 @@ class ContentCafeCoverageProvider(MetadataWranglerBibliographicCoverageProvider)
         :param kwargs: Any extra arguments to be passed into the
             BibliographicCoverageProvider superconstructor.
         """
-        _db = Session.object_session(collection)
-        if not replacement_policy:
-            mirror = MirrorUploader.sitewide(_db)
-            replacement_policy = ReplacementPolicy.from_metadata_source(
-                mirror=mirror
-            )
-
         # Any ISBN-type identifier cataloged in a Collection needs to
         # be processed, whether or not it was explicitly registered.
         super(ContentCafeCoverageProvider, self).__init__(
-            collection=collection, replacement_policy=replacement_policy,
-            **kwargs
+            collection=collection, **kwargs
         )
+        _db = Session.object_session(collection)
         self.content_cafe = api or ContentCafeAPI.from_config(self._db)
 
     def process_item(self, identifier):
@@ -123,6 +123,16 @@ class ContentCafeAPI(object):
 
     # This URL is not used -- it just links to the other URLs.
     overview_url= BASE_URL + "ContentCafeClient/ContentCafe.aspx?UserID=%(userid)s&Password=%(password)s&ItemKey=%(isbn)s"
+
+    # An image file that starts with this bytestring is a placeholder
+    # and should not be treated as a real book cover.
+    STAND_IN_IMAGE_PREFIX = load_file("stand-in-prefix.png")
+
+    # These pieces of text show up where a title normally would, but
+    # they are Content Cafe status messages, not real book titles.
+    KNOWN_BAD_TITLES = set([
+        'No content currently exists for this item',
+    ])
 
     log = logging.getLogger("Content Cafe API")
 
@@ -186,13 +196,15 @@ class ContentCafeAPI(object):
             self.data_source, primary_identifier=isbn_identifier
         )
         
-        # Add the cover image to it.
-        metadata.links.append(
-            LinkData(
-                rel=Hyperlink.IMAGE, href=image_url, media_type=media_type,
-                content=response.content
+        # Add the cover image to it
+        image = response.content
+        if self.is_suitable_image(image):
+            metadata.links.append(
+                LinkData(
+                    rel=Hyperlink.IMAGE, href=image_url, media_type=media_type,
+                    content=response.content
+                )
             )
-        )
 
         for annotator in (
             self.add_descriptions, self.add_excerpt,
@@ -297,6 +309,13 @@ class ContentCafeAPI(object):
             return MeasurementData(Measurement.POPULARITY, value)
 
     @classmethod
+    def is_suitable_image(cls, image):
+        """Is this a real cover image, or does it look like a stand-in image
+        which should be ignored?
+        """
+        return not image.startswith(cls.STAND_IN_IMAGE_PREFIX)
+
+    @classmethod
     def _scrape_list(cls, soup):
         resources = []
         table = soup.find('table', id='Table_Main')
@@ -324,7 +343,10 @@ class ContentCafeAPI(object):
         title_header = soup.find('span', class_='PageHeader2')
         if not title_header or not title_header.string:
             return
-        return title_header.string
+        title = title_header.string
+        if title in cls.KNOWN_BAD_TITLES:
+            title = None
+        return title
 
 class ContentCafeSOAPError(IOError):
     pass
